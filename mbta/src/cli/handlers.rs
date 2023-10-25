@@ -1,18 +1,21 @@
+use std::{fs::File, io::Read, collections::HashMap};
+
 use super::*;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::ArgMatches;
 use serde::Deserialize;
 
 const MBTA_API_URL: &str = "https://api-v3.mbta.com";
+const CACHE_FILE_PATH: &str = ".mbtacache";
 
 #[derive(Debug, Deserialize)]
 struct Data {
-    id: String,
+    id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ObjectData {
-    data: Data,
+    data: Option<Data>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -25,13 +28,13 @@ struct VehicleRelationships {
 #[derive(Debug, Deserialize)]
 struct VehicleAttributes {
     current_status: String,
-    id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct VehicleData {
     attributes: VehicleAttributes,
     relationships: VehicleRelationships,
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,12 +42,12 @@ struct VehiclesResponse {
     data: Vec<VehicleData>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct StopAttributes {
     name: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct StopData {
     attributes: StopAttributes,
 }
@@ -54,8 +57,34 @@ struct StopsResponse {
     data: StopData,
 }
 
+
+// initial naive implementation: just serialize using serde and save dictionary to disk
+fn read_cached_stops_from_file(id: u32) -> Result<StopData> {
+
+    let mut file = match File::open(&CACHE_FILE_PATH) {
+        Err(why) => 
+            return Err(anyhow!(format!("couldn't read cache {}: {}", CACHE_FILE_PATH, why))),
+        Ok(file) => file,
+    };
+    let mut cache_serialized = String::new();
+    file.read_to_string(&mut cache_serialized);
+    let stop_map = match serde_json::from_str::<HashMap<u32, StopData>>(&cache_serialized) {
+        Ok(dict) => dict,
+        //is return Err right here?
+        Err(err) => return Err(anyhow!(format!("couldn't deserialize cache {}: {}", CACHE_FILE_PATH, err)))
+    };
+
+    match stop_map.get(&id) {
+        Some(stop_map) => return Ok(stop_map.clone()),
+        None => return Err(anyhow!(format!("couldn't get value from cached stops file {}", CACHE_FILE_PATH)))
+    }
+}
+
 fn fetch_stop_by_id(potential_id: Option<ObjectData>) -> Result<String> {
-    let id = potential_id.unwrap().data.id;
+
+
+
+    let id = potential_id.unwrap().data.unwrap().id.unwrap();
 
     // what is this first question mark haha
     // still not sure how to use anyhow🤷
@@ -92,12 +121,27 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
     }
     println!();
 
-    let res = reqwest::blocking::get(format!("{}/vehicles", MBTA_API_URL))?;
+    let res = match reqwest::blocking::get(format!("{}/vehicles", MBTA_API_URL)) {
+        Ok(res) => res.text().unwrap(),
+        Err(err) => {
+            println!("Error sending HTTP request!");
+            return Err(err.into());
+        }
+    };
 
-    let deserialized = serde_json::from_str::<VehiclesResponse>(&res.text()?).unwrap();
+    let deserialized = serde_json::from_str::<VehiclesResponse>(&res).unwrap();
     for vehicle in deserialized.data {
         // TODO figure out what to do with these unwraps
-        let route_id = vehicle.relationships.route.unwrap().data.id;
+        let route_id = vehicle
+            .relationships
+            .route
+            .unwrap()
+            .data
+            .unwrap_or(Data {
+                id: Some("Unknown Route".to_string()),
+            })
+            .id
+            .unwrap_or("Unknown Route".to_string());
 
         // TODO filter this better (is there something i can pass to the API?)
         if service.is_some() && !route_id.contains(service.unwrap()) {
@@ -110,11 +154,8 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
         };
 
         println!(
-            "Vehicle {}: {} {} at {}",
-            vehicle.attributes.id.unwrap_or("Unknown ID".to_string()),
-            route_id,
-            vehicle.attributes.current_status,
-            stop_name
+            "Vehicle {}: {} {} {}",
+            vehicle.id, route_id, vehicle.attributes.current_status, stop_name
         );
     }
 
