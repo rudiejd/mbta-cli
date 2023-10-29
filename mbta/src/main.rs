@@ -1,5 +1,6 @@
 mod cli;
 use anyhow::Result;
+use std::collections::HashMap;
 
 fn init_command() -> Result<clap::ArgMatches> {
     let cmd = clap::Command::new("mbta")
@@ -13,18 +14,17 @@ fn init_command() -> Result<clap::ArgMatches> {
 fn main() -> Result<()> {
     let args = init_command()?;
 
-
     match args.subcommand() {
         None => {
             println!("MBTA CLI! A work in progress!");
-            return Ok(())
+            return Ok(());
         }
         Some((_cmd, args)) => match cli::handle_trains_subcommand(args) {
             Err(err) => {
                 println!("{}", err);
-                return Err(err)
-            },
-            Ok(()) => Ok(())
-        }
+                return Err(err);
+            }
+            Ok(()) => Ok(()),
+        },
     }
 }
