@@ -30,6 +30,10 @@ pub fn init_trains_subcommand() -> Command {
 pub fn init_arrivals_subcommand() -> Command {
     Command::new("arrivals")
         .about("Show predicted arrivals for a given stop")
-        .arg(Arg::new("stop").help("Stop for which you'd like to see arrivals"))
+        .arg(Arg::new("stop")
+            .help("Stop for which you'd like to see arrivals")
+            .short('s')
+            .long("stop")
+            .required(true))
         .arg(Arg::new("direction").help("Direction in which you'd like to see arrivals (inbound, outbound, all). Default is all"))
 }

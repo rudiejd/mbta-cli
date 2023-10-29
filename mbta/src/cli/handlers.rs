@@ -1,61 +1,17 @@
-use std::{collections::HashMap, fs::File, fs::{write, self}, io::{Read, Write}};
+use std::{
+    collections::HashMap,
+    fs::File,
+    fs::{self},
+    io::Read,
+};
+
+use super::*;
 
 use anyhow::{anyhow, Result};
 use clap::ArgMatches;
-use serde::{Deserialize, Serialize};
 
 const MBTA_API_URL: &str = "https://api-v3.mbta.com";
 const CACHE_FILE_PATH: &str = ".mbtacache";
-
-#[derive(Debug, Deserialize)]
-struct Data {
-    id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct ObjectData {
-    data: Option<Data>,
-}
-
-#[derive(Debug, Deserialize)]
-struct VehicleRelationships {
-    route: Option<ObjectData>,
-    stop: Option<ObjectData>,
-    trip: Option<ObjectData>,
-}
-
-#[derive(Debug, Deserialize)]
-struct VehicleAttributes {
-    current_status: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct VehicleData {
-    attributes: VehicleAttributes,
-    relationships: VehicleRelationships,
-    id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct VehiclesResponse {
-    data: Vec<VehicleData>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct StopAttributes {
-    name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct StopData {
-    attributes: StopAttributes,
-    id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct StopsResponse {
-    data: Vec<StopData>,
-}
 
 // initial naive implementation: just serialize using serde and save dictionary to disk
 fn read_cached_stops_from_file<'a>(id: &'a String) -> Result<Option<StopData>> {
@@ -95,8 +51,8 @@ fn default_stop_data() -> StopData {
 
 fn default_data() -> Data {
     return Data {
-        id: "Unknown".to_string()
-    }
+        id: "Unknown".to_string(),
+    };
 }
 
 fn write_stops_cache<'b>(id: &'b String) -> StopData {
@@ -120,25 +76,23 @@ fn write_stops_cache<'b>(id: &'b String) -> StopData {
         stop_map.insert(stop.id.clone(), stop);
     }
 
-
     // just assuming it works lawl
     fs::write(CACHE_FILE_PATH, serde_json::to_string(&stop_map).unwrap());
 
-
     return match stop_map.get(id) {
         Some(stop) => stop.clone(),
-        None => default_stop_data()
-    }
+        None => default_stop_data(),
+    };
 }
 
 // fetch a stop by stop id. if we can read from the file system cache,
 // read from the file system cache. otherwise, invalidate the filesystem stop cache
 fn fetch_stop_by_id(potential_id: Option<ObjectData>) -> StopData {
     // TODO this is shitty
-    
+
     let id = match potential_id.unwrap().data {
         Some(data) => data.id,
-        None => return default_stop_data()
+        None => return default_stop_data(),
     };
 
     let stop = match read_cached_stops_from_file(&id) {
@@ -146,7 +100,7 @@ fn fetch_stop_by_id(potential_id: Option<ObjectData>) -> StopData {
 
         // we couldn't read the stop cache file. try to write again
         Err(err) => {
-            dbg!("Could not read cache...");
+            dbg!("Could not read cache...{}", err);
             None
         }
     };
@@ -186,7 +140,8 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
         }
     };
 
-    let deserialized = serde_json::from_str::<VehiclesResponse>(&res).expect("Expected routes response!");
+    let deserialized =
+        serde_json::from_str::<VehiclesResponse>(&res).expect("Expected routes response!");
     for vehicle in deserialized.data {
         // TODO figure out what to do with these unwraps
         let route_id = vehicle
@@ -212,17 +167,55 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_arrivals_subcommand(args: &ArgMatches) -> Result<()> {
-    let stop = args.get_one::<String>("stop");
-    let direction = args.get_one::<String>("direction");
+pub fn handle_subcommand(cmd: &str, args: &ArgMatches) -> Result<()> {
+    match cmd {
+        "trains" => handle_trains_subcommand(args),
+        "arrivals" => handle_arrivals_subcommand(args),
+        _ => unreachable!(),
+    }
+}
 
-    // let res = match reqwest::blocking::get(format!("{}/vehicles", MBTA_API_URL)) {
-    //     Ok(res) => res.text().unwrap(),
-    //     Err(err) => {
-    //         dbg!("Error sending HTTP request!");
-    //         return Err(err.into());
-    //     }
-    // };
+pub fn handle_arrivals_subcommand(args: &ArgMatches) -> Result<()> {
+    let stop = args
+        .get_one::<String>("stop")
+        .expect("Must pass stop to get arrivals!");
+    let direction = match args.get_one::<String>("direction") {
+        Some(dir) => dir,
+        // default to inbound
+        None => "1",
+    };
+
+    let res = match reqwest::blocking::get(format!(
+        "{}/predictions?filter[stop]={}&filter[direction_id]={}",
+        MBTA_API_URL, stop, direction
+    )) {
+        Ok(res) => res.text().unwrap(),
+        Err(err) => {
+            dbg!("Error sending HTTP request!");
+            return Err(err.into());
+        }
+    };
+
+    // TODO probably don't panic here? idk
+    let deserialized =
+        serde_json::from_str::<PredictionsResponse>(&res).expect("Expected predictions response!");
+
+    for prediction in deserialized.data {
+        let route_id = match prediction.relationships.route.data {
+            Some(data) => data.id,
+            None => "Unknown Route".to_string(),
+        };
+        println!(
+            "{} will arive at {} going {}",
+            route_id,
+            prediction
+                .attributes
+                .arrival_time
+                .unwrap_or("unknown".to_string()),
+            direction
+        );
+    }
+
     Ok(())
 }
 

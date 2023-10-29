@@ -19,7 +19,7 @@ fn main() -> Result<()> {
             println!("MBTA CLI! A work in progress!");
             return Ok(());
         }
-        Some((_cmd, args)) => match cli::handle_trains_subcommand(args) {
+        Some((cmd, args)) => match cli::handle_subcommand(cmd, args) {
             Err(err) => {
                 println!("{}", err);
                 return Err(err);
