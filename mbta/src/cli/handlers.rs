@@ -212,6 +212,20 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
     Ok(())
 }
 
+pub fn handle_arrivals_subcommand(args: &ArgMatches) -> Result<()> {
+    let stop = args.get_one::<String>("stop");
+    let direction = args.get_one::<String>("direction");
+
+    // let res = match reqwest::blocking::get(format!("{}/vehicles", MBTA_API_URL)) {
+    //     Ok(res) => res.text().unwrap(),
+    //     Err(err) => {
+    //         dbg!("Error sending HTTP request!");
+    //         return Err(err.into());
+    //     }
+    // };
+    Ok(())
+}
+
 #[test]
 fn deserializes_vehicle() {
     let vehicle_data = "{

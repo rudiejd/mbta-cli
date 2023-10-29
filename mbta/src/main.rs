@@ -1,12 +1,12 @@
 mod cli;
 use anyhow::Result;
-use std::collections::HashMap;
 
 fn init_command() -> Result<clap::ArgMatches> {
     let cmd = clap::Command::new("mbta")
         .version("0.1")
         .author("JD Rudie <rudiejd@miamioh.edu>")
-        .subcommand(cli::init_trains_subcommand());
+        .subcommand(cli::init_trains_subcommand())
+        .subcommand(cli::init_arrivals_subcommand());
 
     Ok(cmd.get_matches())
 }
