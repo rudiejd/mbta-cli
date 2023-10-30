@@ -1,3 +1,4 @@
+use super::*;
 use clap::{builder::EnumValueParser, Arg, Command};
 
 // unused for now :(
@@ -8,13 +9,7 @@ pub enum MbtaService {
     Blue,
     Orange,
     Commuter,
-}
-
-#[derive(Debug, clap::ValueEnum, Clone)]
-pub enum Direction {
-    Inbound = 0,
-    Outbound = 1,
-    All = 2,
+    Bus,
 }
 
 pub fn init_trains_subcommand() -> Command {
@@ -35,5 +30,10 @@ pub fn init_arrivals_subcommand() -> Command {
             .short('s')
             .long("stop")
             .required(true))
-        .arg(Arg::new("direction").help("Direction in which you'd like to see arrivals (inbound, outbound, all). Default is all"))
+        .arg(Arg::new("direction")
+            .value_parser(EnumValueParser::<Direction>::new())
+            .help("Direction in which you'd like to see arrivals (inbound, outbound, all). Default is all")
+            .short('d')
+            .long("direction")
+            )
 }
