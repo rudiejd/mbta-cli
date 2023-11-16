@@ -5,6 +5,8 @@ use std::{
     str::{self},
 };
 
+use termimad;
+
 use super::*;
 
 use anyhow::{anyhow, Result};
@@ -32,6 +34,7 @@ fn default_route_data() -> RouteData {
         attributes: RouteAttributes {
             long_name: "Unknown Route".to_string(),
             direction_destinations: Vec::new(),
+            direction_names: Vec::new(),
         },
     };
 }
@@ -157,12 +160,15 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
     let service = args.get_one::<String>("service");
 
     print!("All active trains");
+
+    let mut url = format!("{}/vehicles", MBTA_API_URL);
     if service.is_some() {
-        print!(" for service {}", service.unwrap())
+        print!(" for service {}", service.unwrap());
+        url = format!("{}?filter[route]={}", url, service.unwrap().as_str());
     }
     println!();
 
-    let res = match reqwest::blocking::get(format!("{}/vehicles", MBTA_API_URL)) {
+    let res = match reqwest::blocking::get(url) {
         Ok(res) => res.text().unwrap(),
         Err(err) => {
             dbg!("Error sending HTTP request!");
@@ -170,11 +176,12 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
         }
     };
 
-    let deserialized =
-        serde_json::from_str::<VehiclesResponse>(&res).expect("Expected routes response!");
+    let deserialized = serde_json::from_str::<VehiclesResponse>(&res)
+        .expect("No vehicles response from MBTA API!");
 
     let cache = cache::get();
 
+    let mut table = "|:-:|:-:|:-:|:-:|-\n|**Vehicle**|**Route**|**Direction**|**Status**|**Stop**|\n|-:|:-:|:-:|:-:|-\n".to_owned();
     for vehicle in deserialized.data {
         // TODO figure out what to do with these unwraps
         let route_id = vehicle
@@ -187,11 +194,6 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
 
         let route = fetch_route_by_id(route_id.clone(), &cache.routes);
 
-        // TODO filter this better (is there something i can pass to the API?)
-        if service.is_some() && !route.attributes.long_name.contains(service.unwrap()) {
-            continue;
-        }
-
         let stop = match vehicle.relationships.stop {
             Some(stop) => match stop.data {
                 Some(d) => fetch_stop_by_id(d.id, &cache.stops),
@@ -200,14 +202,21 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
             None => default_stop_data(),
         };
 
-        println!(
-            "Vehicle {}: On route {} {} {}",
-            vehicle.id,
-            route.attributes.long_name,
-            vehicle.attributes.current_status,
-            stop.attributes.name
+        table.push_str(
+            format!(
+                "|{} | {} | {} to {} | {} | {}\n",
+                vehicle.id,
+                route.attributes.long_name,
+                route.attributes.direction_names[vehicle.attributes.direction_id as usize],
+                route.attributes.direction_destinations[vehicle.attributes.direction_id as usize],
+                vehicle.attributes.current_status,
+                stop.attributes.name
+            )
+            .as_str(),
         );
     }
+    table.push_str("|-");
+    termimad::print_text(table.as_str());
 
     Ok(())
 }

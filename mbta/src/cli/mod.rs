@@ -34,6 +34,7 @@ struct VehicleRelationships {
 #[derive(Debug, Deserialize)]
 struct VehicleAttributes {
     current_status: String,
+    direction_id: u32
 }
 
 #[derive(Debug, Deserialize)]
@@ -98,6 +99,7 @@ struct PredictionsResponse {
 pub struct RouteAttributes {
     long_name: String,
     direction_destinations: Vec<String>,
+    direction_names: Vec<String>
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
