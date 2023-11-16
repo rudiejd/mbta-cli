@@ -1,3 +1,4 @@
+mod cache;
 mod cli;
 use anyhow::Result;
 

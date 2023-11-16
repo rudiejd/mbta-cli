@@ -1,6 +1,9 @@
 use crate::cache::{self, write_routes_to_cache, write_stops_to_cache};
-use std::str::{self};
 use chrono::{DateTime, Local};
+use std::{
+    collections::HashMap,
+    str::{self},
+};
 
 use super::*;
 
@@ -15,9 +18,11 @@ fn default_stop_data() -> StopData {
         id: "Unknown".to_string(),
         attributes: StopAttributes {
             name: "Unknown".to_string(),
-            description: None
+            description: None,
         },
-        relationships: StopRelationships { parent_station: None }
+        relationships: StopRelationships {
+            parent_station: None,
+        },
     };
 }
 
@@ -26,7 +31,7 @@ fn default_route_data() -> RouteData {
         id: "Unknown Route".to_string(),
         attributes: RouteAttributes {
             long_name: "Unknown Route".to_string(),
-            direction_destinations: Vec::new()
+            direction_destinations: Vec::new(),
         },
     };
 }
@@ -39,53 +44,49 @@ fn default_data() -> Data {
 
 // only use the cache for this
 fn fetch_stop_by_name<'a>(name: &'a String) -> Option<StopData> {
-    match cache::get() {
-        Some(c) => {
-            for stop in c.stops.values() {
-                // the actual stations will have parent station as null e.g. https://api-v3.mbta.com/stops/NEC-2287-12 (fake south station)
-                // vs https://api-v3.mbta.com/stops/place-sstat (real south station)
-                if stop.attributes.name.eq(name) && stop.relationships.parent_station.as_ref().unwrap().data.is_none() {
-                    return Some(stop.clone());
-                }
-            }
-
-            return None;
+    let cache = cache::get();
+    for stop in cache.stops.values() {
+        // the actual stations will have parent station as null e.g. https://api-v3.mbta.com/stops/NEC-2287-12 (fake south station)
+        // vs https://api-v3.mbta.com/stops/place-sstat (real south station)
+        if stop.attributes.name.eq(name)
+            && stop
+                .relationships
+                .parent_station
+                .as_ref()
+                .unwrap()
+                .data
+                .is_none()
+        {
+            return Some(stop.clone());
         }
-        None => {
-            let res = match reqwest::blocking::get(format!("{}/stops", MBTA_API_URL))
-                .expect("MBTA response should have body")
-                .text()
-            {
-                Ok(res) => res.to_string(),
-                Err(err) => {
-                    dbg!("Encountered error fetching stops from MBTA API {}", err);
-                    return None;
-                }
-            };
-            let deserialized = serde_json::from_str::<StopsResponse>(&res).unwrap();
+    }
 
-            write_stops_to_cache(&deserialized.data);
-            return None;
-        }
-    };
+    return None;
+    // let res = match reqwest::blocking::get(format!("{}/stops", MBTA_API_URL))
+    //     .expect("MBTA response should have body")
+    //     .text()
+    // {
+    //     Ok(res) => res.to_string(),
+    //     Err(err) => {
+    //         dbg!("Encountered error fetching stops from MBTA API {}", err);
+    //         return None;
+    //     }
+    // };
+    // let deserialized = serde_json::from_str::<StopsResponse>(&res).unwrap();
+    //
+    // write_stops_to_cache(&deserialized.data);
+    // return None;
 }
 
 // fetch a stop by stop id. if we can read from the file system cache,
 // read from the file system cache. otherwise, invalidate the filesystem stop cache
 // TODO make this generic
-fn fetch_stop_by_id(id: String) -> StopData {
-    // these two paragraphs are probably bad...
-    let stop_map = match cache::get() {
-        Some(c) => Some(c.stops),
-        None => None,
-    };
-
-    if let Some(stop_map) = stop_map {
-        match stop_map.get(&id) {
-            Some(s) => return s.clone(),
-            None => (),
-        }
+fn fetch_stop_by_id(id: String, stop_map: &HashMap<String, StopData>) -> StopData {
+    match stop_map.get(&id) {
+        Some(s) => return s.clone(),
+        None => (),
     }
+    dbg!("Cache miss!");
 
     let res = match reqwest::blocking::get(format!("{}/stops", MBTA_API_URL))
         .expect("MBTA response should have body")
@@ -112,22 +113,15 @@ fn fetch_stop_by_id(id: String) -> StopData {
     };
 }
 
-// fetch a stop by stop id. if we can read from the file system cache,
-// read from the file system cache. otherwise, invalidate the filesystem stop cache
-// TODO add caching
-fn fetch_route_by_id(id: String) -> RouteData {
+fn fetch_route_by_id(id: String, route_map: &HashMap<String, RouteData>) -> RouteData {
     // these two paragraphs are probably bad...
-    let route_map = match cache::get() {
-        Some(c) => Some(c.routes),
-        None => None,
-    };
 
-    if let Some(route_map) = route_map {
-        match route_map.get(&id) {
-            Some(s) => return s.clone(),
-            None => (),
-        }
+    match route_map.get(&id) {
+        Some(s) => return s.clone(),
+        None => (),
     }
+
+    dbg!("Cache miss!");
 
     let res = match reqwest::blocking::get(format!("{}/routes", MBTA_API_URL))
         .expect("MBTA response should have body")
@@ -178,6 +172,9 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
 
     let deserialized =
         serde_json::from_str::<VehiclesResponse>(&res).expect("Expected routes response!");
+
+    let cache = cache::get();
+
     for vehicle in deserialized.data {
         // TODO figure out what to do with these unwraps
         let route_id = vehicle
@@ -188,22 +185,27 @@ pub fn handle_trains_subcommand(args: &ArgMatches) -> Result<()> {
             .unwrap_or(default_data())
             .id;
 
+        let route = fetch_route_by_id(route_id.clone(), &cache.routes);
+
         // TODO filter this better (is there something i can pass to the API?)
-        if service.is_some() && !route_id.contains(service.unwrap()) {
+        if service.is_some() && !route.attributes.long_name.contains(service.unwrap()) {
             continue;
         }
 
         let stop = match vehicle.relationships.stop {
             Some(stop) => match stop.data {
-                Some(d) => fetch_stop_by_id(d.id),
+                Some(d) => fetch_stop_by_id(d.id, &cache.stops),
                 None => default_stop_data(),
             },
             None => default_stop_data(),
         };
 
         println!(
-            "Vehicle {}: {} {} {}",
-            vehicle.id, route_id, vehicle.attributes.current_status, stop.attributes.name
+            "Vehicle {}: On route {} {} {}",
+            vehicle.id,
+            route.attributes.long_name,
+            vehicle.attributes.current_status,
+            stop.attributes.name
         );
     }
 
@@ -256,10 +258,12 @@ pub fn handle_arrivals_subcommand(args: &ArgMatches) -> Result<()> {
         serde_json::from_str::<PredictionsResponse>(&res).expect("Expected predictions response!");
 
     println!("Arrivals at {}: ", matched_stop.attributes.name.clone());
+
+    let cache = cache::get();
     for prediction in deserialized.data {
         let route = match prediction.relationships.route.data {
-            Some(data) => fetch_route_by_id(data.id),
-            None => default_route_data()
+            Some(data) => fetch_route_by_id(data.id, &cache.routes),
+            None => default_route_data(),
         };
 
         let arrival_time = match prediction.attributes.arrival_time {
@@ -286,7 +290,9 @@ pub fn handle_arrivals_subcommand(args: &ArgMatches) -> Result<()> {
 
         println!(
             "{} will arive in {} minutes heading to {}",
-            route.attributes.long_name, arrival_time, route.attributes.direction_destinations[prediction.attributes.direction_id]
+            route.attributes.long_name,
+            arrival_time,
+            route.attributes.direction_destinations[prediction.attributes.direction_id]
         );
     }
 
